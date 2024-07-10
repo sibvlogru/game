@@ -79,9 +79,7 @@ function locateFile(path) {
 }
 
 // Hooks that are implemented differently in different runtime environments.
-var read_,
-    readAsync,
-    readBinary;
+var readAsync, readBinary;
 
 if (ENVIRONMENT_IS_SHELL) {
 
@@ -119,14 +117,7 @@ if (ENVIRONMENT_IS_WEB || ENVIRONMENT_IS_WORKER) {
 
   {
 // include: web_or_worker_shell_read.js
-read_ = (url) => {
-    var xhr = new XMLHttpRequest();
-    xhr.open('GET', url, false);
-    xhr.send(null);
-    return xhr.responseText;
-  }
-
-  if (ENVIRONMENT_IS_WORKER) {
+if (ENVIRONMENT_IS_WORKER) {
     readBinary = (url) => {
       var xhr = new XMLHttpRequest();
       xhr.open('GET', url, false);
@@ -136,16 +127,15 @@ read_ = (url) => {
     };
   }
 
-  readAsync = (url, onload, onerror) => {
+  readAsync = (url) => {
     assert(!isFileURI(url), "readAsync does not work with file:// URLs");
-    fetch(url, { credentials: 'same-origin' })
-    .then((response) => {
-      if (response.ok) {
-        return response.arrayBuffer();
-      }
-      return Promise.reject(new Error(response.status + ' : ' + response.url));
-    })
-    .then(onload, onerror)
+    return fetch(url, { credentials: 'same-origin' })
+      .then((response) => {
+        if (response.ok) {
+          return response.arrayBuffer();
+        }
+        return Promise.reject(new Error(response.status + ' : ' + response.url));
+      })
   };
 // end include: web_or_worker_shell_read.js
   }
@@ -181,13 +171,12 @@ assert(typeof Module['memoryInitializerPrefixURL'] == 'undefined', 'Module.memor
 assert(typeof Module['pthreadMainPrefixURL'] == 'undefined', 'Module.pthreadMainPrefixURL option was removed, use Module.locateFile instead');
 assert(typeof Module['cdInitializerPrefixURL'] == 'undefined', 'Module.cdInitializerPrefixURL option was removed, use Module.locateFile instead');
 assert(typeof Module['filePackagePrefixURL'] == 'undefined', 'Module.filePackagePrefixURL option was removed, use Module.locateFile instead');
-assert(typeof Module['read'] == 'undefined', 'Module.read option was removed (modify read_ in JS)');
+assert(typeof Module['read'] == 'undefined', 'Module.read option was removed');
 assert(typeof Module['readAsync'] == 'undefined', 'Module.readAsync option was removed (modify readAsync in JS)');
 assert(typeof Module['readBinary'] == 'undefined', 'Module.readBinary option was removed (modify readBinary in JS)');
 assert(typeof Module['setWindowTitle'] == 'undefined', 'Module.setWindowTitle option was removed (modify emscripten_set_window_title in JS)');
 assert(typeof Module['TOTAL_MEMORY'] == 'undefined', 'Module.TOTAL_MEMORY has been renamed Module.INITIAL_MEMORY');
 legacyModuleProp('asm', 'wasmExports');
-legacyModuleProp('read', 'read_');
 legacyModuleProp('readAsync', 'readAsync');
 legacyModuleProp('readBinary', 'readBinary');
 legacyModuleProp('setWindowTitle', 'setWindowTitle');
@@ -623,15 +612,12 @@ function getBinaryPromise(binaryFile) {
   // If we don't have the binary yet, load it asynchronously using readAsync.
   if (!wasmBinary
       ) {
-    // Fetch the binary use readAsync
-    return new Promise((resolve, reject) => {
-      readAsync(binaryFile,
-        (response) => resolve(new Uint8Array(/** @type{!ArrayBuffer} */(response))),
-        (error) => {
-          try { resolve(getBinarySync(binaryFile)); }
-          catch (e) { reject(e); }
-        });
-    });
+    // Fetch the binary using readAsync
+    return readAsync(binaryFile).then(
+      (response) => new Uint8Array(/** @type{!ArrayBuffer} */(response)),
+      // Fall back to getBinarySync if readAsync fails
+      () => getBinarySync(binaryFile)
+    );
   }
 
   // Otherwise, getBinarySync should be able to get it synchronously
@@ -930,7 +916,7 @@ function dbg(...args) {
       }
     };
 
-  var UTF8Decoder = typeof TextDecoder != 'undefined' ? new TextDecoder('utf8') : undefined;
+  var UTF8Decoder = typeof TextDecoder != 'undefined' ? new TextDecoder() : undefined;
   
     /**
      * Given a pointer 'idx' to a null-terminated UTF8-encoded string in the given
@@ -1746,17 +1732,20 @@ function dbg(...args) {
   /** @param {boolean=} noRunDep */
   var asyncLoad = (url, onload, onerror, noRunDep) => {
       var dep = !noRunDep ? getUniqueRunDependency(`al ${url}`) : '';
-      readAsync(url, (arrayBuffer) => {
-        assert(arrayBuffer, `Loading data file "${url}" failed (no arrayBuffer).`);
-        onload(new Uint8Array(arrayBuffer));
-        if (dep) removeRunDependency(dep);
-      }, (event) => {
-        if (onerror) {
-          onerror();
-        } else {
-          throw `Loading data file "${url}" failed.`;
+      readAsync(url).then(
+        (arrayBuffer) => {
+          assert(arrayBuffer, `Loading data file "${url}" failed (no arrayBuffer).`);
+          onload(new Uint8Array(arrayBuffer));
+          if (dep) removeRunDependency(dep);
+        },
+        (err) => {
+          if (onerror) {
+            onerror();
+          } else {
+            throw `Loading data file "${url}" failed.`;
+          }
         }
-      });
+      );
       if (dep) addRunDependency(dep);
     };
   
@@ -2209,127 +2198,11 @@ function dbg(...args) {
       },
   };
   
-  var ERRNO_MESSAGES = {
-  0:"Success",
-  1:"Arg list too long",
-  2:"Permission denied",
-  3:"Address already in use",
-  4:"Address not available",
-  5:"Address family not supported by protocol family",
-  6:"No more processes",
-  7:"Socket already connected",
-  8:"Bad file number",
-  9:"Trying to read unreadable message",
-  10:"Mount device busy",
-  11:"Operation canceled",
-  12:"No children",
-  13:"Connection aborted",
-  14:"Connection refused",
-  15:"Connection reset by peer",
-  16:"File locking deadlock error",
-  17:"Destination address required",
-  18:"Math arg out of domain of func",
-  19:"Quota exceeded",
-  20:"File exists",
-  21:"Bad address",
-  22:"File too large",
-  23:"Host is unreachable",
-  24:"Identifier removed",
-  25:"Illegal byte sequence",
-  26:"Connection already in progress",
-  27:"Interrupted system call",
-  28:"Invalid argument",
-  29:"I/O error",
-  30:"Socket is already connected",
-  31:"Is a directory",
-  32:"Too many symbolic links",
-  33:"Too many open files",
-  34:"Too many links",
-  35:"Message too long",
-  36:"Multihop attempted",
-  37:"File or path name too long",
-  38:"Network interface is not configured",
-  39:"Connection reset by network",
-  40:"Network is unreachable",
-  41:"Too many open files in system",
-  42:"No buffer space available",
-  43:"No such device",
-  44:"No such file or directory",
-  45:"Exec format error",
-  46:"No record locks available",
-  47:"The link has been severed",
-  48:"Not enough core",
-  49:"No message of desired type",
-  50:"Protocol not available",
-  51:"No space left on device",
-  52:"Function not implemented",
-  53:"Socket is not connected",
-  54:"Not a directory",
-  55:"Directory not empty",
-  56:"State not recoverable",
-  57:"Socket operation on non-socket",
-  59:"Not a typewriter",
-  60:"No such device or address",
-  61:"Value too large for defined data type",
-  62:"Previous owner died",
-  63:"Not super-user",
-  64:"Broken pipe",
-  65:"Protocol error",
-  66:"Unknown protocol",
-  67:"Protocol wrong type for socket",
-  68:"Math result not representable",
-  69:"Read only file system",
-  70:"Illegal seek",
-  71:"No such process",
-  72:"Stale file handle",
-  73:"Connection timed out",
-  74:"Text file busy",
-  75:"Cross-device link",
-  100:"Device not a stream",
-  101:"Bad font file fmt",
-  102:"Invalid slot",
-  103:"Invalid request code",
-  104:"No anode",
-  105:"Block device required",
-  106:"Channel number out of range",
-  107:"Level 3 halted",
-  108:"Level 3 reset",
-  109:"Link number out of range",
-  110:"Protocol driver not attached",
-  111:"No CSI structure available",
-  112:"Level 2 halted",
-  113:"Invalid exchange",
-  114:"Invalid request descriptor",
-  115:"Exchange full",
-  116:"No data (for no delay io)",
-  117:"Timer expired",
-  118:"Out of streams resources",
-  119:"Machine is not on the network",
-  120:"Package not installed",
-  121:"The object is remote",
-  122:"Advertise error",
-  123:"Srmount error",
-  124:"Communication error on send",
-  125:"Cross mount point (not really error)",
-  126:"Given log. name not unique",
-  127:"f.d. invalid for this operation",
-  128:"Remote address changed",
-  129:"Can   access a needed shared lib",
-  130:"Accessing a corrupted shared lib",
-  131:".lib section in a.out corrupted",
-  132:"Attempting to link in too many libs",
-  133:"Attempting to exec a shared library",
-  135:"Streams pipe error",
-  136:"Too many users",
-  137:"Socket type not supported",
-  138:"Not supported",
-  139:"Protocol family not supported",
-  140:"Can't send after socket shutdown",
-  141:"Too many references",
-  142:"Host is down",
-  148:"No medium (in tape drive)",
-  156:"Level 2 not synchronized",
-  };
+  
+  
+  var strError = (errno) => {
+      return UTF8ToString(_strerror(errno));
+    };
   
   var ERRNO_CODES = {
       'EPERM': 63,
@@ -2473,7 +2346,7 @@ function dbg(...args) {
         // the test `err instanceof FS.ErrnoError` won't detect an error coming from another filesystem, causing bugs.
         // we'll use the reliable test `err.name == "ErrnoError"` instead
         constructor(errno) {
-          super(ERRNO_MESSAGES[errno]);
+          super(runtimeInitialized ? strError(errno) : '');
           // TODO(sbc): Use the inline member declaration syntax once we
           // support it in acorn and closure.
           this.name = 'ErrnoError';
@@ -2805,6 +2678,7 @@ function dbg(...args) {
       },
   getStream:(fd) => FS.streams[fd],
   createStream(stream, fd = -1) {
+        assert(fd >= -1);
   
         // clone it, so we can return an instance of FSStream
         stream = Object.assign(new FS.FSStream(), stream);
@@ -3862,18 +3736,13 @@ function dbg(...args) {
         if (obj.isDevice || obj.isFolder || obj.link || obj.contents) return true;
         if (typeof XMLHttpRequest != 'undefined') {
           throw new Error("Lazy loading should have been performed (contents set) in createLazyFile, but it was not. Lazy loading only works in web workers. Use --embed-file or --preload-file in emcc on the main thread.");
-        } else if (read_) {
-          // Command-line.
+        } else { // Command-line.
           try {
-            // WARNING: Can't read binary files in V8's d8 or tracemonkey's js, as
-            //          read() will try to parse UTF8.
-            obj.contents = intArrayFromString(read_(obj.url), true);
+            obj.contents = readBinary(obj.url);
             obj.usedBytes = obj.contents.length;
           } catch (e) {
             throw new FS.ErrnoError(29);
           }
-        } else {
-          throw new Error('Cannot load without read() or XMLHttpRequest.');
         }
       },
   createLazyFile(parent, name, url, canRead, canWrite) {
@@ -5965,7 +5834,7 @@ function dbg(...args) {
             Browser.setImmediate = /** @type{function(function(): ?, ...?): number} */(function Browser_emulated_setImmediate(func) {
               setImmediates.push(func);
               if (ENVIRONMENT_IS_WORKER) {
-                if (Module['setImmediates'] === undefined) Module['setImmediates'] = [];
+                Module['setImmediates'] ??= [];
                 Module['setImmediates'].push(func);
                 postMessage({target: emscriptenMainLoopMessageId}); // In --proxy-to-worker, route the message via proxyClient.js
               } else postMessage(emscriptenMainLoopMessageId, "*"); // On the main thread, can just send the message to itself.
@@ -7572,24 +7441,24 @@ function dbg(...args) {
   /** @suppress {duplicate } */
   var _emscripten_webgl_do_create_context = (target, attributes) => {
       assert(attributes);
-      var a = ((attributes)>>2);
-      var powerPreference = HEAP32[a + (24>>2)];
+      var attr32 = ((attributes)>>2);
+      var powerPreference = HEAP32[attr32 + (8>>2)];
       var contextAttributes = {
-        'alpha': !!HEAP32[a + (0>>2)],
-        'depth': !!HEAP32[a + (4>>2)],
-        'stencil': !!HEAP32[a + (8>>2)],
-        'antialias': !!HEAP32[a + (12>>2)],
-        'premultipliedAlpha': !!HEAP32[a + (16>>2)],
-        'preserveDrawingBuffer': !!HEAP32[a + (20>>2)],
+        'alpha': !!HEAP8[attributes + 0],
+        'depth': !!HEAP8[attributes + 1],
+        'stencil': !!HEAP8[attributes + 2],
+        'antialias': !!HEAP8[attributes + 3],
+        'premultipliedAlpha': !!HEAP8[attributes + 4],
+        'preserveDrawingBuffer': !!HEAP8[attributes + 5],
         'powerPreference': webglPowerPreferences[powerPreference],
-        'failIfMajorPerformanceCaveat': !!HEAP32[a + (28>>2)],
+        'failIfMajorPerformanceCaveat': !!HEAP8[attributes + 12],
         // The following are not predefined WebGL context attributes in the WebGL specification, so the property names can be minified by Closure.
-        majorVersion: HEAP32[a + (32>>2)],
-        minorVersion: HEAP32[a + (36>>2)],
-        enableExtensionsByDefault: HEAP32[a + (40>>2)],
-        explicitSwapControl: HEAP32[a + (44>>2)],
-        proxyContextToMainThread: HEAP32[a + (48>>2)],
-        renderViaOffscreenBackBuffer: HEAP32[a + (52>>2)]
+        majorVersion: HEAP32[attr32 + (16>>2)],
+        minorVersion: HEAP32[attr32 + (20>>2)],
+        enableExtensionsByDefault: HEAP8[attributes + 24],
+        explicitSwapControl: HEAP8[attributes + 25],
+        proxyContextToMainThread: HEAP32[attr32 + (28>>2)],
+        renderViaOffscreenBackBuffer: HEAP8[attributes + 32]
       };
   
       var canvas = findCanvasEventTarget(target);
@@ -7641,6 +7510,18 @@ function dbg(...args) {
       var ext = context.GLctx.getExtension(extString);
       return !!ext;
     };
+
+  
+  
+  var stringToNewUTF8 = (str) => {
+      var size = lengthBytesUTF8(str) + 1;
+      var ret = _malloc(size);
+      if (ret) stringToUTF8(str, ret, size);
+      return ret;
+    };
+  
+  var _emscripten_webgl_get_supported_extensions = () =>
+      stringToNewUTF8(GLctx.getSupportedExtensions().join(' '));
 
   var _emscripten_webgl_make_context_current = (contextHandle) => {
       var success = GL.makeContextCurrent(contextHandle);
@@ -8706,14 +8587,6 @@ function dbg(...args) {
 
   
   
-  var stringToNewUTF8 = (str) => {
-      var size = lengthBytesUTF8(str) + 1;
-      var ret = _malloc(size);
-      if (ret) stringToUTF8(str, ret, size);
-      return ret;
-    };
-  
-  
   var _glGetString = (name_) => {
       var ret = GL.stringCache[name_];
       if (!ret) {
@@ -8760,35 +8633,6 @@ function dbg(...args) {
         GL.stringCache[name_] = ret;
       }
       return ret;
-    };
-
-  
-  var _glGetStringi = (name, index) => {
-      if (GL.currentContext.version < 2) {
-        GL.recordError(0x502 /* GL_INVALID_OPERATION */); // Calling GLES3/WebGL2 function with a GLES2/WebGL1 context
-        return 0;
-      }
-      var stringiCache = GL.stringiCache[name];
-      if (stringiCache) {
-        if (index < 0 || index >= stringiCache.length) {
-          GL.recordError(0x501/*GL_INVALID_VALUE*/);
-          return 0;
-        }
-        return stringiCache[index];
-      }
-      switch (name) {
-        case 0x1F03 /* GL_EXTENSIONS */:
-          var exts = webglGetExtensions().map(stringToNewUTF8);
-          stringiCache = GL.stringiCache[name] = exts;
-          if (index < 0 || index >= stringiCache.length) {
-            GL.recordError(0x501/*GL_INVALID_VALUE*/);
-            return 0;
-          }
-          return stringiCache[index];
-        default:
-          GL.recordError(0x500/*GL_INVALID_ENUM*/);
-          return 0;
-      }
     };
 
   var _glGetSynciv = (sync, pname, bufSize, length, values) => {
@@ -9720,7 +9564,7 @@ function dbg(...args) {
   	 * @returns {void}
   	 */
   	clear() {
-  		this.audioBuffer = null;
+  		this.setAudioBuffer(null);
   		GodotAudio.Sample.delete(this.id);
   	}
   
@@ -9977,66 +9821,35 @@ function dbg(...args) {
   		this.streamObjectId = params.streamObjectId;
   		/** @type {number} */
   		this.offset = options.offset ?? 0;
-  		/** @type {LoopMode} */
+  		/** @type {number} */
   		this.startTime = options.startTime ?? 0;
+  		/** @type {boolean} */
+  		this.isPaused = false;
   		/** @type {number} */
   		this.pauseTime = 0;
   		/** @type {number} */
   		this._playbackRate = 44100;
   		/** @type {LoopMode} */
-  		this._loopMode = 'disabled';
+  		this.loopMode = options.loopMode ?? this.getSample().loopMode ?? 'disabled';
   		/** @type {number} */
   		this._pitchScale = 1;
+  		/** @type {number} */
+  		this._sourceStartTime = 0;
   		/** @type {Map<Bus, SampleNodeBus>} */
   		this._sampleNodeBuses = new Map();
-  		/** @type {AudioBufferSourceNode} */
+  		/** @type {AudioBufferSourceNode | null} */
   		this._source = GodotAudio.ctx.createBufferSource();
+  		/** @type {AudioBufferSourceNode["onended"]} */
+  		this._onended = null;
   
   		this.setPlaybackRate(options.playbackRate ?? 44100);
-  		this.setLoopMode(options.loopMode ?? this.getSample().loopMode ?? 'disabled');
   		this._source.buffer = this.getSample().getAudioBuffer();
   
-  		/** @type {SampleNode} */
-  		// eslint-disable-next-line consistent-this
-  		const self = this;
-  		this._source.addEventListener('ended', (_) => {
-  			switch (self.getSample().loopMode) {
-  			case 'disabled':
-  				GodotAudio.SampleNode.stopSampleNode(self.id);
-  				break;
-  			default:
-  				// do nothing
-  			}
-  		});
+  		this._addEndedListener();
   
   		const bus = GodotAudio.Bus.getBus(params.busIndex);
   		const sampleNodeBus = this.getSampleNodeBus(bus);
   		sampleNodeBus.setVolume(options.volume);
-  	}
-  
-  	/**
-  	 * Gets the loop mode of the current instance.
-  	 * @returns {LoopMode}
-  	 */
-  	getLoopMode() {
-  		return this._loopMode;
-  	}
-  
-  	/**
-  	 * Sets the loop mode of the current instance.
-  	 * @param {LoopMode} val Value to set.
-  	 * @returns {void}
-  	 */
-  	setLoopMode(val) {
-  		this._loopMode = val;
-  		switch (val) {
-  		case 'forward':
-  		case 'backward':
-  			this._source.loop = true;
-  			break;
-  		default:
-  			this._source.loop = false;
-  		}
   	}
   
   	/**
@@ -10096,7 +9909,8 @@ function dbg(...args) {
   	 * @returns {void}
   	 */
   	start() {
-  		this._source.start(this.offset);
+  		this._resetSourceStartTime();
+  		this._source.start(this.startTime, this.offset);
   	}
   
   	/**
@@ -10104,8 +9918,17 @@ function dbg(...args) {
   	 * @returns {void}
   	 */
   	stop() {
-  		this._source.stop();
   		this.clear();
+  	}
+  
+  	/**
+  	 * Restarts the `SampleNode`.
+  	 */
+  	restart() {
+  		this.isPaused = false;
+  		this.pauseTime = 0;
+  		this._resetSourceStartTime();
+  		this._restart();
   	}
   
   	/**
@@ -10115,21 +9938,11 @@ function dbg(...args) {
   	 */
   	pause(enable = true) {
   		if (enable) {
-  			this.pauseTime = (GodotAudio.ctx.currentTime - this.startTime) / this.playbackRate;
-  			this._source.stop();
+  			this._pause();
   			return;
   		}
   
-  		if (this.pauseTime === 0) {
-  			return;
-  		}
-  
-  		this._source.disconnect();
-  		this._source = GodotAudio.ctx.createBufferSource();
-  
-  		this._source.buffer = this.getSample().getAudioBuffer();
-  		this._source.connect(this._gain);
-  		this._source.start(this.offset + this.pauseTime);
+  		this._unpause();
   	}
   
   	/**
@@ -10177,17 +9990,31 @@ function dbg(...args) {
   	 * @returns {void}
   	 */
   	clear() {
-  		this._source.stop();
-  		this._source.disconnect();
-  		this._source = null;
+  		this.isPaused = false;
+  		this.pauseTime = 0;
+  
+  		if (this._source != null) {
+  			this._source.removeEventListener('ended', this._onended);
+  			this._onended = null;
+  			this._source.stop();
+  			this._source.disconnect();
+  			this._source = null;
+  		}
   
   		for (const sampleNodeBus of this._sampleNodeBuses.values()) {
   			sampleNodeBus.clear();
   		}
   		this._sampleNodeBuses.clear();
-  		this._sampleNodeBuses = null;
   
   		GodotAudio.SampleNode.delete(this.id);
+  	}
+  
+  	/**
+  	 * Resets the source start time
+  	 * @returns {void}
+  	 */
+  	_resetSourceStartTime() {
+  		this._sourceStartTime = GodotAudio.ctx.currentTime;
   	}
   
   	/**
@@ -10196,6 +10023,86 @@ function dbg(...args) {
   	 */
   	_syncPlaybackRate() {
   		this._source.playbackRate.value = this.getPlaybackRate() * this.getPitchScale();
+  	}
+  
+  	/**
+  	 * Restarts the `SampleNode`.
+  	 * Honors `isPaused` and `pauseTime`.
+  	 * @returns {void}
+  	 */
+  	_restart() {
+  		this._source.disconnect();
+  		this._source = GodotAudio.ctx.createBufferSource();
+  		this._source.buffer = this.getSample().getAudioBuffer();
+  
+  		// Make sure that we connect the new source to the sample node bus.
+  		for (const sampleNodeBus of this._sampleNodeBuses.values()) {
+  			this.connect(sampleNodeBus.getInputNode());
+  		}
+  
+  		this._addEndedListener();
+  		const pauseTime = this.isPaused
+  			? this.pauseTime
+  			: 0;
+  		this._source.start(this.startTime, this.offset + pauseTime);
+  	}
+  
+  	/**
+  	 * Pauses the `SampleNode`.
+  	 * @returns {void}
+  	 */
+  	_pause() {
+  		this.isPaused = true;
+  		this.pauseTime = (GodotAudio.ctx.currentTime - this._sourceStartTime) / this.getPlaybackRate();
+  		this._source.stop();
+  	}
+  
+  	/**
+  	 * Unpauses the `SampleNode`.
+  	 * @returns {void}
+  	 */
+  	_unpause() {
+  		this._restart();
+  		this.isPaused = false;
+  		this.pauseTime = 0;
+  	}
+  
+  	/**
+  	 * Adds an "ended" listener to the source node to repeat it if necessary.
+  	 * @returns {void}
+  	 */
+  	_addEndedListener() {
+  		if (this._onended != null) {
+  			this._source.removeEventListener('ended', this._onended);
+  		}
+  
+  		/** @type {SampleNode} */
+  		// eslint-disable-next-line consistent-this
+  		const self = this;
+  		this._onended = (_) => {
+  			if (self.isPaused) {
+  				return;
+  			}
+  
+  			switch (self.getSample().loopMode) {
+  			case 'disabled': {
+  				const id = this.id;
+  				self.stop();
+  				if (GodotAudio.sampleFinishedCallback != null) {
+  					const idCharPtr = GodotRuntime.allocString(id);
+  					GodotAudio.sampleFinishedCallback(idCharPtr);
+  					GodotRuntime.free(idCharPtr);
+  				}
+  			} break;
+  			case 'forward':
+  			case 'backward':
+  				self.restart();
+  				break;
+  			default:
+  				// do nothing
+  			}
+  		};
+  		this._source.addEventListener('ended', this._onended);
   	}
   },
   buses:null,
@@ -10270,8 +10177,7 @@ function dbg(...args) {
   	 */
   	static move(fromIndex, toIndex) {
   		const movedBus = GodotAudio.Bus.getBus(fromIndex);
-  		let buses = GodotAudio.buses;
-  		buses = buses.filter((_, i) => i !== fromIndex);
+  		const buses = GodotAudio.buses.filter((_, i) => i !== fromIndex);
   		// Inserts at index.
   		buses.splice(toIndex - 1, 0, movedBus);
   		GodotAudio.buses = buses;
@@ -10518,6 +10424,7 @@ function dbg(...args) {
   		}
   	}
   },
+  sampleFinishedCallback:null,
   ctx:null,
   input:null,
   driver:null,
@@ -10704,7 +10611,7 @@ function dbg(...args) {
   		},
   set_sample_bus_volume_db:function (busIndex, volumeDb) {
   			const bus = GodotAudio.Bus.getBus(busIndex);
-  			bus.volumeDb = volumeDb;
+  			bus.setVolumeDb(volumeDb);
   		},
   set_sample_bus_solo:function (busIndex, enable) {
   			const bus = GodotAudio.Bus.getBus(busIndex);
@@ -10849,6 +10756,10 @@ function dbg(...args) {
   				sampleRate,
   			}
   		);
+  	}
+
+  function _godot_audio_sample_set_finished_callback(callbackPtr) {
+  		GodotAudio.sampleFinishedCallback = GodotRuntime.get_func(callbackPtr);
   	}
 
   function _godot_audio_sample_set_pause(playbackObjectIdStrPtr, pause) {
@@ -12331,6 +12242,7 @@ function dbg(...args) {
   			ime.style.top = '0px';
   			ime.style.width = '100%';
   			ime.style.height = '40px';
+  			ime.style.pointerEvents = 'none';
   			ime.style.display = 'none';
   			ime.contentEditable = 'true';
   
@@ -13356,11 +13268,16 @@ function dbg(...args) {
   			case 0:
   				return null;
   			case 1:
-  				return !!GodotRuntime.getHeapValue(val, 'i64');
-  			case 2:
-  				return GodotRuntime.getHeapValue(val, 'i64');
+  				return Boolean(GodotRuntime.getHeapValue(val, 'i64'));
+  			case 2: {
+  				// `heap_value` may be a bigint.
+  				const heap_value = GodotRuntime.getHeapValue(val, 'i64');
+  				return heap_value >= Number.MIN_SAFE_INTEGER && heap_value <= Number.MAX_SAFE_INTEGER
+  					? Number(heap_value)
+  					: heap_value;
+  			}
   			case 3:
-  				return GodotRuntime.getHeapValue(val, 'double');
+  				return Number(GodotRuntime.getHeapValue(val, 'double'));
   			case 4:
   				return GodotRuntime.parseString(GodotRuntime.getHeapValue(val, '*'));
   			case 24: // OBJECT
@@ -13384,6 +13301,9 @@ function dbg(...args) {
   				}
   				GodotRuntime.setHeapValue(p_exchange, p_val, 'double');
   				return 3; // FLOAT
+  			} else if (type === 'bigint') {
+  				GodotRuntime.setHeapValue(p_exchange, p_val, 'i64');
+  				return 2; // INT
   			} else if (type === 'string') {
   				const c_str = GodotRuntime.allocString(p_val);
   				GodotRuntime.setHeapValue(p_exchange, c_str, '*');
@@ -13991,10 +13911,14 @@ function dbg(...args) {
   					// next reference space.
   					window.setTimeout(function () {
   						const reference_space_c_str = GodotRuntime.allocString(reference_space_type);
-  						const enabled_features_c_str = GodotRuntime.allocString(Array.from(session.enabledFeatures).join(','));
-  						onstarted(reference_space_c_str, enabled_features_c_str);
+  						const enabled_features = 'enabledFeatures' in session ? Array.from(session.enabledFeatures) : [];
+  						const enabled_features_c_str = GodotRuntime.allocString(enabled_features.join(','));
+  						const environment_blend_mode = 'environmentBlendMode' in session ? session.environmentBlendMode : '';
+  						const environment_blend_mode_c_str = GodotRuntime.allocString(environment_blend_mode);
+  						onstarted(reference_space_c_str, enabled_features_c_str, environment_blend_mode_c_str);
   						GodotRuntime.free(reference_space_c_str);
   						GodotRuntime.free(enabled_features_c_str);
+  						GodotRuntime.free(environment_blend_mode_c_str);
   					}, 0);
   				}
   
@@ -14184,309 +14108,6 @@ function dbg(...args) {
   	}
 
 
-  
-  var arraySum = (array, index) => {
-      var sum = 0;
-      for (var i = 0; i <= index; sum += array[i++]) {
-        // no-op
-      }
-      return sum;
-    };
-  
-  
-  var MONTH_DAYS_LEAP = [31,29,31,30,31,30,31,31,30,31,30,31];
-  
-  var MONTH_DAYS_REGULAR = [31,28,31,30,31,30,31,31,30,31,30,31];
-  var addDays = (date, days) => {
-      var newDate = new Date(date.getTime());
-      while (days > 0) {
-        var leap = isLeapYear(newDate.getFullYear());
-        var currentMonth = newDate.getMonth();
-        var daysInCurrentMonth = (leap ? MONTH_DAYS_LEAP : MONTH_DAYS_REGULAR)[currentMonth];
-  
-        if (days > daysInCurrentMonth-newDate.getDate()) {
-          // we spill over to next month
-          days -= (daysInCurrentMonth-newDate.getDate()+1);
-          newDate.setDate(1);
-          if (currentMonth < 11) {
-            newDate.setMonth(currentMonth+1)
-          } else {
-            newDate.setMonth(0);
-            newDate.setFullYear(newDate.getFullYear()+1);
-          }
-        } else {
-          // we stay in current month
-          newDate.setDate(newDate.getDate()+days);
-          return newDate;
-        }
-      }
-  
-      return newDate;
-    };
-  
-  
-  
-  
-  var writeArrayToMemory = (array, buffer) => {
-      assert(array.length >= 0, 'writeArrayToMemory array must have a length (should be an array or typed array)')
-      HEAP8.set(array, buffer);
-    };
-  
-  var _strftime = (s, maxsize, format, tm) => {
-      // size_t strftime(char *restrict s, size_t maxsize, const char *restrict format, const struct tm *restrict timeptr);
-      // http://pubs.opengroup.org/onlinepubs/009695399/functions/strftime.html
-  
-      var tm_zone = HEAPU32[(((tm)+(40))>>2)];
-  
-      var date = {
-        tm_sec: HEAP32[((tm)>>2)],
-        tm_min: HEAP32[(((tm)+(4))>>2)],
-        tm_hour: HEAP32[(((tm)+(8))>>2)],
-        tm_mday: HEAP32[(((tm)+(12))>>2)],
-        tm_mon: HEAP32[(((tm)+(16))>>2)],
-        tm_year: HEAP32[(((tm)+(20))>>2)],
-        tm_wday: HEAP32[(((tm)+(24))>>2)],
-        tm_yday: HEAP32[(((tm)+(28))>>2)],
-        tm_isdst: HEAP32[(((tm)+(32))>>2)],
-        tm_gmtoff: HEAP32[(((tm)+(36))>>2)],
-        tm_zone: tm_zone ? UTF8ToString(tm_zone) : ''
-      };
-      
-  
-      var pattern = UTF8ToString(format);
-  
-      // expand format
-      var EXPANSION_RULES_1 = {
-        '%c': '%a %b %d %H:%M:%S %Y',     // Replaced by the locale's appropriate date and time representation - e.g., Mon Aug  3 14:02:01 2013
-        '%D': '%m/%d/%y',                 // Equivalent to %m / %d / %y
-        '%F': '%Y-%m-%d',                 // Equivalent to %Y - %m - %d
-        '%h': '%b',                       // Equivalent to %b
-        '%r': '%I:%M:%S %p',              // Replaced by the time in a.m. and p.m. notation
-        '%R': '%H:%M',                    // Replaced by the time in 24-hour notation
-        '%T': '%H:%M:%S',                 // Replaced by the time
-        '%x': '%m/%d/%y',                 // Replaced by the locale's appropriate date representation
-        '%X': '%H:%M:%S',                 // Replaced by the locale's appropriate time representation
-        // Modified Conversion Specifiers
-        '%Ec': '%c',                      // Replaced by the locale's alternative appropriate date and time representation.
-        '%EC': '%C',                      // Replaced by the name of the base year (period) in the locale's alternative representation.
-        '%Ex': '%m/%d/%y',                // Replaced by the locale's alternative date representation.
-        '%EX': '%H:%M:%S',                // Replaced by the locale's alternative time representation.
-        '%Ey': '%y',                      // Replaced by the offset from %EC (year only) in the locale's alternative representation.
-        '%EY': '%Y',                      // Replaced by the full alternative year representation.
-        '%Od': '%d',                      // Replaced by the day of the month, using the locale's alternative numeric symbols, filled as needed with leading zeros if there is any alternative symbol for zero; otherwise, with leading <space> characters.
-        '%Oe': '%e',                      // Replaced by the day of the month, using the locale's alternative numeric symbols, filled as needed with leading <space> characters.
-        '%OH': '%H',                      // Replaced by the hour (24-hour clock) using the locale's alternative numeric symbols.
-        '%OI': '%I',                      // Replaced by the hour (12-hour clock) using the locale's alternative numeric symbols.
-        '%Om': '%m',                      // Replaced by the month using the locale's alternative numeric symbols.
-        '%OM': '%M',                      // Replaced by the minutes using the locale's alternative numeric symbols.
-        '%OS': '%S',                      // Replaced by the seconds using the locale's alternative numeric symbols.
-        '%Ou': '%u',                      // Replaced by the weekday as a number in the locale's alternative representation (Monday=1).
-        '%OU': '%U',                      // Replaced by the week number of the year (Sunday as the first day of the week, rules corresponding to %U ) using the locale's alternative numeric symbols.
-        '%OV': '%V',                      // Replaced by the week number of the year (Monday as the first day of the week, rules corresponding to %V ) using the locale's alternative numeric symbols.
-        '%Ow': '%w',                      // Replaced by the number of the weekday (Sunday=0) using the locale's alternative numeric symbols.
-        '%OW': '%W',                      // Replaced by the week number of the year (Monday as the first day of the week) using the locale's alternative numeric symbols.
-        '%Oy': '%y',                      // Replaced by the year (offset from %C ) using the locale's alternative numeric symbols.
-      };
-      for (var rule in EXPANSION_RULES_1) {
-        pattern = pattern.replace(new RegExp(rule, 'g'), EXPANSION_RULES_1[rule]);
-      }
-  
-      var WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-      var MONTHS = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
-  
-      function leadingSomething(value, digits, character) {
-        var str = typeof value == 'number' ? value.toString() : (value || '');
-        while (str.length < digits) {
-          str = character[0]+str;
-        }
-        return str;
-      }
-  
-      function leadingNulls(value, digits) {
-        return leadingSomething(value, digits, '0');
-      }
-  
-      function compareByDay(date1, date2) {
-        function sgn(value) {
-          return value < 0 ? -1 : (value > 0 ? 1 : 0);
-        }
-  
-        var compare;
-        if ((compare = sgn(date1.getFullYear()-date2.getFullYear())) === 0) {
-          if ((compare = sgn(date1.getMonth()-date2.getMonth())) === 0) {
-            compare = sgn(date1.getDate()-date2.getDate());
-          }
-        }
-        return compare;
-      }
-  
-      function getFirstWeekStartDate(janFourth) {
-          switch (janFourth.getDay()) {
-            case 0: // Sunday
-              return new Date(janFourth.getFullYear()-1, 11, 29);
-            case 1: // Monday
-              return janFourth;
-            case 2: // Tuesday
-              return new Date(janFourth.getFullYear(), 0, 3);
-            case 3: // Wednesday
-              return new Date(janFourth.getFullYear(), 0, 2);
-            case 4: // Thursday
-              return new Date(janFourth.getFullYear(), 0, 1);
-            case 5: // Friday
-              return new Date(janFourth.getFullYear()-1, 11, 31);
-            case 6: // Saturday
-              return new Date(janFourth.getFullYear()-1, 11, 30);
-          }
-      }
-  
-      function getWeekBasedYear(date) {
-          var thisDate = addDays(new Date(date.tm_year+1900, 0, 1), date.tm_yday);
-  
-          var janFourthThisYear = new Date(thisDate.getFullYear(), 0, 4);
-          var janFourthNextYear = new Date(thisDate.getFullYear()+1, 0, 4);
-  
-          var firstWeekStartThisYear = getFirstWeekStartDate(janFourthThisYear);
-          var firstWeekStartNextYear = getFirstWeekStartDate(janFourthNextYear);
-  
-          if (compareByDay(firstWeekStartThisYear, thisDate) <= 0) {
-            // this date is after the start of the first week of this year
-            if (compareByDay(firstWeekStartNextYear, thisDate) <= 0) {
-              return thisDate.getFullYear()+1;
-            }
-            return thisDate.getFullYear();
-          }
-          return thisDate.getFullYear()-1;
-      }
-  
-      var EXPANSION_RULES_2 = {
-        '%a': (date) => WEEKDAYS[date.tm_wday].substring(0,3) ,
-        '%A': (date) => WEEKDAYS[date.tm_wday],
-        '%b': (date) => MONTHS[date.tm_mon].substring(0,3),
-        '%B': (date) => MONTHS[date.tm_mon],
-        '%C': (date) => {
-          var year = date.tm_year+1900;
-          return leadingNulls((year/100)|0,2);
-        },
-        '%d': (date) => leadingNulls(date.tm_mday, 2),
-        '%e': (date) => leadingSomething(date.tm_mday, 2, ' '),
-        '%g': (date) => {
-          // %g, %G, and %V give values according to the ISO 8601:2000 standard week-based year.
-          // In this system, weeks begin on a Monday and week 1 of the year is the week that includes
-          // January 4th, which is also the week that includes the first Thursday of the year, and
-          // is also the first week that contains at least four days in the year.
-          // If the first Monday of January is the 2nd, 3rd, or 4th, the preceding days are part of
-          // the last week of the preceding year; thus, for Saturday 2nd January 1999,
-          // %G is replaced by 1998 and %V is replaced by 53. If December 29th, 30th,
-          // or 31st is a Monday, it and any following days are part of week 1 of the following year.
-          // Thus, for Tuesday 30th December 1997, %G is replaced by 1998 and %V is replaced by 01.
-  
-          return getWeekBasedYear(date).toString().substring(2);
-        },
-        '%G': getWeekBasedYear,
-        '%H': (date) => leadingNulls(date.tm_hour, 2),
-        '%I': (date) => {
-          var twelveHour = date.tm_hour;
-          if (twelveHour == 0) twelveHour = 12;
-          else if (twelveHour > 12) twelveHour -= 12;
-          return leadingNulls(twelveHour, 2);
-        },
-        '%j': (date) => {
-          // Day of the year (001-366)
-          return leadingNulls(date.tm_mday + arraySum(isLeapYear(date.tm_year+1900) ? MONTH_DAYS_LEAP : MONTH_DAYS_REGULAR, date.tm_mon-1), 3);
-        },
-        '%m': (date) => leadingNulls(date.tm_mon+1, 2),
-        '%M': (date) => leadingNulls(date.tm_min, 2),
-        '%n': () => '\n',
-        '%p': (date) => {
-          if (date.tm_hour >= 0 && date.tm_hour < 12) {
-            return 'AM';
-          }
-          return 'PM';
-        },
-        '%S': (date) => leadingNulls(date.tm_sec, 2),
-        '%t': () => '\t',
-        '%u': (date) => date.tm_wday || 7,
-        '%U': (date) => {
-          var days = date.tm_yday + 7 - date.tm_wday;
-          return leadingNulls(Math.floor(days / 7), 2);
-        },
-        '%V': (date) => {
-          // Replaced by the week number of the year (Monday as the first day of the week)
-          // as a decimal number [01,53]. If the week containing 1 January has four
-          // or more days in the new year, then it is considered week 1.
-          // Otherwise, it is the last week of the previous year, and the next week is week 1.
-          // Both January 4th and the first Thursday of January are always in week 1. [ tm_year, tm_wday, tm_yday]
-          var val = Math.floor((date.tm_yday + 7 - (date.tm_wday + 6) % 7 ) / 7);
-          // If 1 Jan is just 1-3 days past Monday, the previous week
-          // is also in this year.
-          if ((date.tm_wday + 371 - date.tm_yday - 2) % 7 <= 2) {
-            val++;
-          }
-          if (!val) {
-            val = 52;
-            // If 31 December of prev year a Thursday, or Friday of a
-            // leap year, then the prev year has 53 weeks.
-            var dec31 = (date.tm_wday + 7 - date.tm_yday - 1) % 7;
-            if (dec31 == 4 || (dec31 == 5 && isLeapYear(date.tm_year%400-1))) {
-              val++;
-            }
-          } else if (val == 53) {
-            // If 1 January is not a Thursday, and not a Wednesday of a
-            // leap year, then this year has only 52 weeks.
-            var jan1 = (date.tm_wday + 371 - date.tm_yday) % 7;
-            if (jan1 != 4 && (jan1 != 3 || !isLeapYear(date.tm_year)))
-              val = 1;
-          }
-          return leadingNulls(val, 2);
-        },
-        '%w': (date) => date.tm_wday,
-        '%W': (date) => {
-          var days = date.tm_yday + 7 - ((date.tm_wday + 6) % 7);
-          return leadingNulls(Math.floor(days / 7), 2);
-        },
-        '%y': (date) => {
-          // Replaced by the last two digits of the year as a decimal number [00,99]. [ tm_year]
-          return (date.tm_year+1900).toString().substring(2);
-        },
-        // Replaced by the year as a decimal number (for example, 1997). [ tm_year]
-        '%Y': (date) => date.tm_year+1900,
-        '%z': (date) => {
-          // Replaced by the offset from UTC in the ISO 8601:2000 standard format ( +hhmm or -hhmm ).
-          // For example, "-0430" means 4 hours 30 minutes behind UTC (west of Greenwich).
-          var off = date.tm_gmtoff;
-          var ahead = off >= 0;
-          off = Math.abs(off) / 60;
-          // convert from minutes into hhmm format (which means 60 minutes = 100 units)
-          off = (off / 60)*100 + (off % 60);
-          return (ahead ? '+' : '-') + String("0000" + off).slice(-4);
-        },
-        '%Z': (date) => date.tm_zone,
-        '%%': () => '%'
-      };
-  
-      // Replace %% with a pair of NULLs (which cannot occur in a C string), then
-      // re-inject them after processing.
-      pattern = pattern.replace(/%%/g, '\0\0')
-      for (var rule in EXPANSION_RULES_2) {
-        if (pattern.includes(rule)) {
-          pattern = pattern.replace(new RegExp(rule, 'g'), EXPANSION_RULES_2[rule](date));
-        }
-      }
-      pattern = pattern.replace(/\0\0/g, '%')
-  
-      var bytes = intArrayFromString(pattern, false);
-      if (bytes.length > maxsize) {
-        return 0;
-      }
-  
-      writeArrayToMemory(bytes, s);
-      return bytes.length-1;
-    };
-
-  var _strftime_l = (s, maxsize, format, tm, loc) => {
-      return _strftime(s, maxsize, format, tm); // no locale support yet
-    };
-
 
 
   
@@ -14506,6 +14127,10 @@ function dbg(...args) {
     };
   
   
+  var writeArrayToMemory = (array, buffer) => {
+      assert(array.length >= 0, 'writeArrayToMemory array must have a length (should be an array or typed array)')
+      HEAP8.set(array, buffer);
+    };
   
   
   var stackSave = () => _emscripten_stack_get_current();
@@ -14598,11 +14223,13 @@ function dbg(...args) {
 var GLctx;;
 for (var i = 0; i < 32; ++i) tempFixedLengthArray.push(new Array(i));;
 var miniTempWebGLIntBuffersStorage = new Int32Array(288);
-  for (/**@suppress{duplicate}*/var i = 0; i < 288; ++i) {
+  // Create GL_POOL_TEMP_BUFFERS_SIZE+1 temporary buffers, for uploads of size 0 through GL_POOL_TEMP_BUFFERS_SIZE inclusive
+  for (/**@suppress{duplicate}*/var i = 0; i <= 288; ++i) {
     miniTempWebGLIntBuffers[i] = miniTempWebGLIntBuffersStorage.subarray(0, i);
   };
 var miniTempWebGLFloatBuffersStorage = new Float32Array(288);
-  for (/**@suppress{duplicate}*/var i = 0; i < 288; ++i) {
+  // Create GL_POOL_TEMP_BUFFERS_SIZE+1 temporary buffers, for uploads of size 0 through GL_POOL_TEMP_BUFFERS_SIZE inclusive
+  for (/**@suppress{duplicate}*/var i = 0; i <= 288; ++i) {
     miniTempWebGLFloatBuffers[i] = miniTempWebGLFloatBuffersStorage.subarray(0, i);
   };
 Module["request_quit"] = function() { GodotOS.request_quit() };Module["onExit"] = GodotOS.cleanup;GodotOS._fs_sync_promise = Promise.resolve();;
@@ -14723,6 +14350,8 @@ var wasmImports = {
   emscripten_webgl_destroy_context: _emscripten_webgl_destroy_context,
   /** @export */
   emscripten_webgl_enable_extension: _emscripten_webgl_enable_extension,
+  /** @export */
+  emscripten_webgl_get_supported_extensions: _emscripten_webgl_get_supported_extensions,
   /** @export */
   emscripten_webgl_make_context_current: _emscripten_webgl_make_context_current,
   /** @export */
@@ -14892,8 +14521,6 @@ var wasmImports = {
   /** @export */
   glGetString: _glGetString,
   /** @export */
-  glGetStringi: _glGetStringi,
-  /** @export */
   glGetSynciv: _glGetSynciv,
   /** @export */
   glGetUniformBlockIndex: _glGetUniformBlockIndex,
@@ -15003,6 +14630,8 @@ var wasmImports = {
   godot_audio_sample_is_active: _godot_audio_sample_is_active,
   /** @export */
   godot_audio_sample_register_stream: _godot_audio_sample_register_stream,
+  /** @export */
+  godot_audio_sample_set_finished_callback: _godot_audio_sample_set_finished_callback,
   /** @export */
   godot_audio_sample_set_pause: _godot_audio_sample_set_pause,
   /** @export */
@@ -15288,11 +14917,7 @@ var wasmImports = {
   /** @export */
   godot_webxr_update_target_frame_rate: _godot_webxr_update_target_frame_rate,
   /** @export */
-  proc_exit: _proc_exit,
-  /** @export */
-  strftime: _strftime,
-  /** @export */
-  strftime_l: _strftime_l
+  proc_exit: _proc_exit
 };
 var wasmExports = createWasm();
 var ___wasm_call_ctors = createExportWrapper('__wasm_call_ctors', 0);
@@ -15306,6 +14931,7 @@ var _htons = createExportWrapper('htons', 1);
 var _ntohs = createExportWrapper('ntohs', 1);
 var __emwebxr_on_input_event = Module['__emwebxr_on_input_event'] = createExportWrapper('_emwebxr_on_input_event', 2);
 var __emwebxr_on_simple_event = Module['__emwebxr_on_simple_event'] = createExportWrapper('_emwebxr_on_simple_event', 1);
+var _strerror = createExportWrapper('strerror', 1);
 var ___funcs_on_exit = createExportWrapper('__funcs_on_exit', 0);
 var _emscripten_stack_init = () => (_emscripten_stack_init = wasmExports['emscripten_stack_init'])();
 var _emscripten_stack_get_free = () => (_emscripten_stack_get_free = wasmExports['emscripten_stack_get_free'])();
@@ -15331,6 +14957,8 @@ var missingLibrarySymbols = [
   'convertU32PairToI53',
   'getTempRet0',
   'setTempRet0',
+  'arraySum',
+  'addDays',
   'emscriptenLog',
   'readEmAsmArgs',
   'listenOnce',
@@ -15478,10 +15106,8 @@ var unexportedSymbols = [
   'MONTH_DAYS_LEAP_CUMULATIVE',
   'isLeapYear',
   'ydayFromDate',
-  'arraySum',
-  'addDays',
   'ERRNO_CODES',
-  'ERRNO_MESSAGES',
+  'strError',
   'inetPton4',
   'inetNtop4',
   'inetPton6',
@@ -15704,7 +15330,7 @@ function run(args = arguments_) {
     preMain();
 
     readyPromiseResolve(Module);
-    if (Module['onRuntimeInitialized']) Module['onRuntimeInitialized']();
+    Module['onRuntimeInitialized']?.();
 
     if (shouldRunNow) callMain(args);
 
